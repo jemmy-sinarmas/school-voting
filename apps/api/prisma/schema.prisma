@@ -1,0 +1,205 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgcrypto, citext]
+}
+
+// -----------------------------------------------------------------------
+// NOTE on vote integrity: the partial unique index that guarantees only one
+// candidate_lists row can be `active` system-wide, and the BEFORE INSERT
+// trigger that re-derives and enforces the 2-vote-per-student-per-list cap,
+// cannot be expressed in Prisma's schema DSL (no partial-index / trigger
+// support for Postgres). Both are added via raw SQL in
+// prisma/migrations/<ts>_vote_integrity_extras/migration.sql, applied after
+// this schema's own migration. See that file for the actual DDL.
+// -----------------------------------------------------------------------
+
+enum StudentStatus {
+  pending_verification
+  active
+  disabled
+}
+
+enum AdminRole {
+  admin
+  super_admin
+}
+
+enum AdminStatus {
+  active
+  disabled
+}
+
+enum OtpOwnerType {
+  student
+  admin
+}
+
+enum OtpPurpose {
+  verify_email
+  password_reset
+}
+
+enum ListStatus {
+  draft
+  active
+  closed
+}
+
+model Student {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email          String        @unique @db.Citext
+  studentNumber  String        @unique @map("student_number")
+  fullName       String        @map("full_name")
+  passwordHash   String        @map("password_hash")
+  status         StudentStatus @default(pending_verification)
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  votes Vote[]
+
+  @@map("students")
+}
+
+model Admin {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String      @unique @db.Citext
+  fullName     String      @map("full_name")
+  passwordHash String      @map("password_hash")
+  role         AdminRole   @default(admin)
+  status       AdminStatus @default(active)
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  promotedWinners Winner[] @relation("PromotedBy")
+
+  @@map("admins")
+}
+
+// owner_type/owner_id is an app-level polymorphic reference (no DB FK,
+// since it targets two different parent tables) — enforced in the service
+// layer, never trusted from client input.
+model OtpCode {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerType    OtpOwnerType @map("owner_type")
+  ownerId      String       @map("owner_id") @db.Uuid
+  purpose      OtpPurpose
+  codeHash     String       @map("code_hash")
+  expiresAt    DateTime     @map("expires_at")
+  attemptCount Int          @default(0) @map("attempt_count")
+  maxAttempts  Int          @default(5) @map("max_attempts")
+  consumedAt   DateTime?    @map("consumed_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  @@index([ownerType, ownerId, purpose, consumedAt])
+  @@map("otp_codes")
+}
+
+model ElectionYear {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  year      Int      @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  candidateLists CandidateList[]
+  winners        Winner[]
+
+  @@map("election_years")
+}
+
+model CandidateList {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  electionYearId String     @map("election_year_id") @db.Uuid
+  name           String
+  status         ListStatus @default(draft)
+  votingStartAt  DateTime?  @map("voting_start_at")
+  votingEndAt    DateTime?  @map("voting_end_at")
+  activatedAt    DateTime?  @map("activated_at")
+  closedAt       DateTime?  @map("closed_at")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  electionYear ElectionYear @relation(fields: [electionYearId], references: [id])
+  candidates   Candidate[]
+  votes        Vote[]
+  winners      Winner[]
+
+  // NOTE: the actual "only one active list system-wide" guarantee is the
+  // partial unique index added via raw SQL migration (see note above) —
+  // this composite index just speeds up the common "lists for a year" query.
+  @@index([electionYearId, status])
+  @@map("candidate_lists")
+}
+
+model Candidate {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  candidateListId  String   @map("candidate_list_id") @db.Uuid
+  fullName         String   @map("full_name")
+  email            String   @db.Citext
+  photoPath        String?  @map("photo_path")
+  videoUrl         String?  @map("video_url")
+  posterPath       String?  @map("poster_path")
+  programme        String?
+  semester         String?
+  instagram        String?
+  phoneNumber      String?  @map("phone_number")
+  executiveSummary String?  @map("executive_summary")
+  whyVoteForMe     String?  @map("why_vote_for_me")
+  vision           String?
+  mission          String?
+  description      String?
+  isDeleted        Boolean  @default(false) @map("is_deleted")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // RESTRICT: a list/candidate with vote history can't be deleted out from
+  // under its votes; soft-delete (isDeleted) is used instead at the app layer.
+  candidateList CandidateList @relation(fields: [candidateListId], references: [id], onDelete: Restrict)
+  votes         Vote[]
+  winnerEntries Winner[]
+
+  @@index([candidateListId])
+  @@map("candidates")
+}
+
+model Vote {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  studentId       String   @map("student_id") @db.Uuid
+  candidateId     String   @map("candidate_id") @db.Uuid
+  candidateListId String   @map("candidate_list_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  student       Student       @relation(fields: [studentId], references: [id])
+  candidate     Candidate     @relation(fields: [candidateId], references: [id])
+  candidateList CandidateList @relation(fields: [candidateListId], references: [id])
+
+  // Prevents double-voting the same candidate at the DB level regardless of
+  // application logic (layer 1 of the vote-integrity design). The 2-per-list
+  // cap (layer 2/3) is enforced via an advisory-lock transaction in
+  // VotesService plus the raw-SQL trigger backstop — not expressible here.
+  @@unique([studentId, candidateId])
+  @@index([studentId, candidateListId])
+  @@map("votes")
+}
+
+model Winner {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  electionYearId     String   @map("election_year_id") @db.Uuid
+  candidateId        String   @map("candidate_id") @db.Uuid
+  candidateListId    String   @map("candidate_list_id") @db.Uuid
+  promotedByAdminId  String   @map("promoted_by_admin_id") @db.Uuid
+  promotedAt         DateTime @default(now()) @map("promoted_at")
+  isPublished        Boolean  @default(true) @map("is_published")
+
+  electionYear    ElectionYear  @relation(fields: [electionYearId], references: [id])
+  candidate       Candidate     @relation(fields: [candidateId], references: [id])
+  candidateList   CandidateList @relation(fields: [candidateListId], references: [id])
+  promotedByAdmin Admin         @relation("PromotedBy", fields: [promotedByAdminId], references: [id])
+
+  @@unique([electionYearId, candidateId])
+  @@map("winners")
+}

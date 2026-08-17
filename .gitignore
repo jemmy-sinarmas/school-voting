@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+uploads/
+apps/mobile/android/app/build/
+apps/mobile/ios/build/
+.expo/
+coverage/
+.claude/

@@ -1,0 +1,14 @@
+{
+  "name": "school-voting",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:api": "pnpm --filter @school-voting/api run start:dev",
+    "dev:admin": "pnpm --filter @school-voting/admin-web run dev",
+    "build": "pnpm -r run build",
+    "seed": "pnpm --filter @school-voting/api run seed"
+  }
+}
