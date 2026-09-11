@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Avatar,
@@ -14,6 +14,8 @@ import {
   DialogTitle,
   Grid,
   IconButton,
+  LinearProgress,
+  MenuItem,
   Paper,
   Stack,
   Table,
@@ -35,8 +37,8 @@ import EmojiEventsIcon from "@mui/icons-material/EmojiEvents";
 import { DateTimePicker } from "@mui/x-date-pickers/DateTimePicker";
 import { useSnackbar } from "notistack";
 import { ListStatus } from "@school-voting/shared";
-import { candidatesApi, listsApi, winnersApi } from "../api/endpoints";
-import { Candidate, CandidateList, TallyRow } from "../api/types";
+import { candidatesApi, listsApi, rolesApi, winnersApi } from "../api/endpoints";
+import { Candidate, CandidateList, Role, TallyRow, TurnoutSummary } from "../api/types";
 import { ApiError } from "../api/client";
 import { useConfirm } from "../components/ConfirmProvider";
 
@@ -49,15 +51,21 @@ export function ListDetailPage() {
   const confirm = useConfirm();
   const [list, setList] = useState<CandidateList | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [showAddCandidate, setShowAddCandidate] = useState(false);
   const [showActivate, setShowActivate] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!id) return;
     try {
-      const [listData, candidatesData] = await Promise.all([listsApi.get(id), candidatesApi.listForList(id)]);
+      const [listData, candidatesData, rolesData] = await Promise.all([
+        listsApi.get(id),
+        candidatesApi.listForList(id),
+        rolesApi.listForList(id),
+      ]);
       setList(listData);
       setCandidates(candidatesData);
+      setRoles(rolesData);
     } catch (err) {
       enqueueSnackbar(err instanceof ApiError ? err.message : "Failed to load list", { variant: "error" });
     }
@@ -67,9 +75,17 @@ export function ListDetailPage() {
     refresh();
   }, [refresh]);
 
+  const rolesById = useMemo(() => new Map(roles.map((r) => [r.id, r])), [roles]);
+  const sortedRoles = useMemo(
+    () => [...roles].sort((a, b) => a.displayOrder - b.displayOrder || a.name.localeCompare(b.name)),
+    [roles],
+  );
+
   if (!list || !id) {
     return null;
   }
+
+  const isDraft = list.status === ListStatus.DRAFT;
 
   async function handleClose() {
     const ok = await confirm({
@@ -121,6 +137,13 @@ export function ListDetailPage() {
     }
   }
 
+  // Candidates grouped under their role, in role display order. Candidates
+  // whose role is missing (shouldn't happen) fall into an "Unassigned" bucket.
+  const groupedByRole = sortedRoles.map((role) => ({
+    role,
+    candidates: candidates.filter((c) => c.roleId === role.id),
+  }));
+
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 3 }} flexWrap="wrap" gap={2}>
@@ -131,12 +154,17 @@ export function ListDetailPage() {
           </Typography>
         </Box>
         <Stack direction="row" gap={1}>
-          {list.status === ListStatus.DRAFT && (
+          {isDraft && (
             <>
-              <Button variant="outlined" startIcon={<AddIcon />} onClick={() => setShowAddCandidate(true)}>
+              <Button
+                variant="outlined"
+                startIcon={<AddIcon />}
+                disabled={roles.length === 0}
+                onClick={() => setShowAddCandidate(true)}
+              >
                 Add candidate
               </Button>
-              <Button variant="contained" onClick={() => setShowActivate(true)}>
+              <Button variant="contained" disabled={candidates.length === 0} onClick={() => setShowActivate(true)}>
                 Activate
               </Button>
               <Button variant="outlined" color="error" onClick={handleDeleteList}>
@@ -152,31 +180,64 @@ export function ListDetailPage() {
         </Stack>
       </Stack>
 
-      <Grid container spacing={2}>
-        {candidates.map((candidate) => (
-          <Grid key={candidate.id} item xs={12} sm={6} md={4} lg={3}>
-            <CandidateCard
-              candidate={candidate}
-              editable={list.status === ListStatus.DRAFT}
-              onDelete={() => handleDeleteCandidate(candidate)}
-              onUpdated={refresh}
-            />
-          </Grid>
-        ))}
-      </Grid>
+      {isDraft && <RolesPanel listId={id} roles={sortedRoles} onChanged={refresh} />}
+
+      {roles.length === 0 ? (
+        <Paper elevation={0} sx={{ p: 3 }}>
+          <Typography variant="body2" color="text.secondary">
+            {isDraft
+              ? "Add at least one role (e.g. President) before adding candidates. Each candidate stands for one role, and students vote for one candidate per role."
+              : "This list has no roles."}
+          </Typography>
+        </Paper>
+      ) : (
+        <Stack spacing={4}>
+          {groupedByRole.map(({ role, candidates: roleCandidates }) => (
+            <Box key={role.id}>
+              <Typography variant="h2" sx={{ mb: 1.5 }}>
+                {role.name}
+              </Typography>
+              {roleCandidates.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  No candidates for this role yet.
+                </Typography>
+              ) : (
+                <Grid container spacing={2}>
+                  {roleCandidates.map((candidate) => (
+                    <Grid key={candidate.id} item xs={12} sm={6} md={4} lg={3}>
+                      <CandidateCard
+                        candidate={candidate}
+                        roles={sortedRoles}
+                        editable={isDraft}
+                        onDelete={() => handleDeleteCandidate(candidate)}
+                        onUpdated={refresh}
+                      />
+                    </Grid>
+                  ))}
+                </Grid>
+              )}
+            </Box>
+          ))}
+        </Stack>
+      )}
 
       {(list.status === ListStatus.ACTIVE || list.status === ListStatus.CLOSED) && (
-        <TallyPanel
-          candidateListId={id}
-          live={list.status === ListStatus.ACTIVE}
-          closed={list.status === ListStatus.CLOSED}
-          onPromoted={refresh}
-        />
+        <>
+          <TurnoutPanel candidateListId={id} live={list.status === ListStatus.ACTIVE} />
+          <TallyPanel
+            candidateListId={id}
+            rolesById={rolesById}
+            live={list.status === ListStatus.ACTIVE}
+            closed={list.status === ListStatus.CLOSED}
+            onPromoted={refresh}
+          />
+        </>
       )}
 
       <AddCandidateDialog
         open={showAddCandidate}
         candidateListId={id}
+        roles={sortedRoles}
         onClose={() => setShowAddCandidate(false)}
         onCreated={() => {
           setShowAddCandidate(false);
@@ -199,6 +260,82 @@ export function ListDetailPage() {
         }}
       />
     </Box>
+  );
+}
+
+function RolesPanel({ listId, roles, onChanged }: { listId: string; roles: Role[]; onChanged: () => void }) {
+  const { enqueueSnackbar } = useSnackbar();
+  const confirm = useConfirm();
+  const [newName, setNewName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function addRole(e: FormEvent) {
+    e.preventDefault();
+    if (!newName.trim()) return;
+    setSubmitting(true);
+    try {
+      await rolesApi.create(listId, { name: newName.trim(), displayOrder: roles.length });
+      setNewName("");
+      onChanged();
+    } catch (err) {
+      enqueueSnackbar(err instanceof ApiError ? err.message : "Failed to add role", { variant: "error" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function removeRole(role: Role) {
+    const ok = await confirm({
+      title: `Delete role "${role.name}"?`,
+      description: "The role must have no candidates. This cannot be undone.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await rolesApi.remove(role.id);
+      onChanged();
+    } catch (err) {
+      enqueueSnackbar(err instanceof ApiError ? err.message : "Failed to delete role", { variant: "error" });
+    }
+  }
+
+  return (
+    <Card elevation={0} sx={{ mb: 4 }}>
+      <CardContent>
+        <Typography variant="h2" sx={{ mb: 1 }}>
+          Roles / positions
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Students vote for one candidate per role. Roles can only be changed while the list is a draft.
+        </Typography>
+        <Stack direction="row" gap={1} flexWrap="wrap" sx={{ mb: 2 }}>
+          {roles.map((role) => (
+            <Chip key={role.id} label={role.name} onDelete={() => removeRole(role)} variant="outlined" />
+          ))}
+          {roles.length === 0 && (
+            <Typography variant="body2" color="text.secondary">
+              No roles yet.
+            </Typography>
+          )}
+        </Stack>
+        <Box component="form" onSubmit={addRole}>
+          <Stack direction="row" gap={1.5} alignItems="center">
+            <TextField
+              size="small"
+              label="New role name"
+              placeholder="e.g. President"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              sx={{ minWidth: 240 }}
+            />
+            <Button type="submit" variant="outlined" startIcon={<AddIcon />} disabled={submitting || !newName.trim()}>
+              Add role
+            </Button>
+          </Stack>
+        </Box>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -253,11 +390,13 @@ function ActivateDialog({
 
 function CandidateCard({
   candidate,
+  roles,
   editable,
   onDelete,
   onUpdated,
 }: {
   candidate: Candidate;
+  roles: Role[];
   editable: boolean;
   onDelete: () => void;
   onUpdated: () => void;
@@ -324,6 +463,7 @@ function CandidateCard({
       <EditCandidateDialog
         open={showEdit}
         candidate={candidate}
+        roles={roles}
         onClose={() => setShowEdit(false)}
         onSaved={() => {
           setShowEdit(false);
@@ -349,16 +489,19 @@ const EDIT_FIELDS: { key: keyof Candidate; label: string; multiline?: boolean }[
 function EditCandidateDialog({
   open,
   candidate,
+  roles,
   onClose,
   onSaved,
 }: {
   open: boolean;
   candidate: Candidate;
+  roles: Role[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const { enqueueSnackbar } = useSnackbar();
   const [values, setValues] = useState<Record<string, string>>({});
+  const [roleId, setRoleId] = useState<string>(candidate.roleId);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -368,13 +511,14 @@ function EditCandidateDialog({
       initial[field.key] = (candidate[field.key] as string | null) ?? "";
     }
     setValues(initial);
+    setRoleId(candidate.roleId);
   }, [open, candidate]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await candidatesApi.update(candidate.id, values as Partial<Candidate>);
+      await candidatesApi.update(candidate.id, { ...(values as Partial<Candidate>), roleId });
       onSaved();
     } catch (err) {
       enqueueSnackbar(err instanceof ApiError ? err.message : "Failed to save candidate details", { variant: "error" });
@@ -388,6 +532,13 @@ function EditCandidateDialog({
       <DialogTitle>Edit {candidate.fullName}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
+          <TextField select label="Role" value={roleId} onChange={(e) => setRoleId(e.target.value)} fullWidth>
+            {roles.map((role) => (
+              <MenuItem key={role.id} value={role.id}>
+                {role.name}
+              </MenuItem>
+            ))}
+          </TextField>
           {EDIT_FIELDS.map((field) => (
             <TextField
               key={field.key}
@@ -416,25 +567,38 @@ function EditCandidateDialog({
 function AddCandidateDialog({
   open,
   candidateListId,
+  roles,
   onClose,
   onCreated,
 }: {
   open: boolean;
   candidateListId: string;
+  roles: Role[];
   onClose: () => void;
   onCreated: () => void;
 }) {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
+  const [roleId, setRoleId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setRoleId(roles[0]?.id ?? "");
+    }
+  }, [open, roles]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!roleId) {
+      setError("Select a role for this candidate");
+      return;
+    }
     setSubmitting(true);
     try {
-      await candidatesApi.create({ candidateListId, fullName, email });
+      await candidatesApi.create({ candidateListId, roleId, fullName, email });
       setFullName("");
       setEmail("");
       onCreated();
@@ -455,6 +619,13 @@ function AddCandidateDialog({
               {error}
             </Typography>
           )}
+          <TextField select label="Role" value={roleId} onChange={(e) => setRoleId(e.target.value)} required>
+            {roles.map((role) => (
+              <MenuItem key={role.id} value={role.id}>
+                {role.name}
+              </MenuItem>
+            ))}
+          </TextField>
           <TextField label="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} required autoFocus />
           <TextField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
         </Stack>
@@ -471,13 +642,76 @@ function AddCandidateDialog({
   );
 }
 
+function TurnoutPanel({ candidateListId, live }: { candidateListId: string; live: boolean }) {
+  const { enqueueSnackbar } = useSnackbar();
+  const [turnout, setTurnout] = useState<TurnoutSummary | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setTurnout(await listsApi.turnout(candidateListId));
+    } catch (err) {
+      enqueueSnackbar(err instanceof ApiError ? err.message : "Failed to load turnout", { variant: "error" });
+    }
+  }, [candidateListId, enqueueSnackbar]);
+
+  useEffect(() => {
+    load();
+    if (!live) return;
+    const interval = setInterval(load, 15000);
+    return () => clearInterval(interval);
+  }, [load, live]);
+
+  if (!turnout) return null;
+
+  return (
+    <Box sx={{ mt: 5 }}>
+      <Typography variant="h2" sx={{ mb: 1.5 }}>
+        Turnout
+      </Typography>
+      <Card elevation={0}>
+        <CardContent>
+          <Stack direction="row" flexWrap="wrap" gap={4} sx={{ mb: 2 }}>
+            <Stat label="Voted" value={`${turnout.votedStudents}`} />
+            <Stat label="Not voted" value={`${turnout.notVotedStudents}`} />
+            <Stat label="Eligible students" value={`${turnout.eligibleStudents}`} />
+            <Stat label="Turnout" value={`${turnout.turnoutPercent}%`} />
+          </Stack>
+          <LinearProgress
+            variant="determinate"
+            value={Math.min(turnout.turnoutPercent, 100)}
+            sx={{ height: 10, borderRadius: 5 }}
+          />
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+            {turnout.votedStudents} of {turnout.eligibleStudents} eligible (active) students have voted.
+          </Typography>
+        </CardContent>
+      </Card>
+    </Box>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <Box>
+      <Typography variant="h2" sx={{ lineHeight: 1.1 }}>
+        {value}
+      </Typography>
+      <Typography variant="caption" color="text.secondary">
+        {label}
+      </Typography>
+    </Box>
+  );
+}
+
 function TallyPanel({
   candidateListId,
+  rolesById,
   live,
   closed,
   onPromoted,
 }: {
   candidateListId: string;
+  rolesById: Map<string, Role>;
   live: boolean;
   closed: boolean;
   onPromoted: () => void;
@@ -531,6 +765,13 @@ function TallyPanel({
 
   const maxVotes = Math.max(1, ...rows.map((r) => r.voteCount));
 
+  // Preserve the API's role-grouped ordering (roleName, then votes desc) while
+  // rendering a subheader row whenever the role changes.
+  const orderedRoleIds: string[] = [];
+  for (const row of rows) {
+    if (!orderedRoleIds.includes(row.roleId)) orderedRoleIds.push(row.roleId);
+  }
+
   return (
     <Box sx={{ mt: 5 }}>
       <Typography variant="h2" sx={{ mb: 1.5 }}>
@@ -546,33 +787,48 @@ function TallyPanel({
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map((row) => (
-              <TableRow key={row.candidateId} hover>
-                {closed && (
-                  <TableCell padding="checkbox">
-                    <Checkbox checked={selected.has(row.candidateId)} onChange={() => toggle(row.candidateId)} />
-                  </TableCell>
-                )}
-                <TableCell>{row.fullName}</TableCell>
-                <TableCell sx={{ width: "50%" }}>
-                  <Stack direction="row" alignItems="center" gap={1.5}>
-                    <Box sx={{ flex: 1, height: 8, bgcolor: "grey.100", borderRadius: 4, overflow: "hidden" }}>
-                      <Box
-                        sx={{
-                          width: `${(row.voteCount / maxVotes) * 100}%`,
-                          height: "100%",
-                          bgcolor: "primary.main",
-                          transition: "width 0.3s",
-                        }}
-                      />
-                    </Box>
-                    <Typography variant="body2" fontWeight={600} sx={{ minWidth: 24, textAlign: "right" }}>
-                      {row.voteCount}
-                    </Typography>
-                  </Stack>
-                </TableCell>
-              </TableRow>
-            ))}
+            {orderedRoleIds.map((roleId) => {
+              const roleRows = rows.filter((r) => r.roleId === roleId);
+              const roleName = rolesById.get(roleId)?.name ?? roleRows[0]?.roleName ?? "Role";
+              return (
+                <>
+                  <TableRow key={`role-${roleId}`}>
+                    <TableCell colSpan={closed ? 3 : 2} sx={{ bgcolor: "grey.50" }}>
+                      <Typography variant="subtitle2" fontWeight={700}>
+                        {roleName}
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                  {roleRows.map((row) => (
+                    <TableRow key={row.candidateId} hover>
+                      {closed && (
+                        <TableCell padding="checkbox">
+                          <Checkbox checked={selected.has(row.candidateId)} onChange={() => toggle(row.candidateId)} />
+                        </TableCell>
+                      )}
+                      <TableCell>{row.fullName}</TableCell>
+                      <TableCell sx={{ width: "50%" }}>
+                        <Stack direction="row" alignItems="center" gap={1.5}>
+                          <Box sx={{ flex: 1, height: 8, bgcolor: "grey.100", borderRadius: 4, overflow: "hidden" }}>
+                            <Box
+                              sx={{
+                                width: `${(row.voteCount / maxVotes) * 100}%`,
+                                height: "100%",
+                                bgcolor: "primary.main",
+                                transition: "width 0.3s",
+                              }}
+                            />
+                          </Box>
+                          <Typography variant="body2" fontWeight={600} sx={{ minWidth: 24, textAlign: "right" }}>
+                            {row.voteCount}
+                          </Typography>
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </>
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>

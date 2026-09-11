@@ -48,10 +48,12 @@ export class CandidatesService {
     if (list.status !== ListStatus.DRAFT) {
       throw new ConflictException("Candidates can only be added while the list is in draft");
     }
+    await this.assertRoleBelongsToList(dto.roleId, dto.candidateListId);
 
     return this.prisma.candidate.create({
       data: {
         candidateListId: dto.candidateListId,
+        roleId: dto.roleId,
         fullName: dto.fullName,
         email: dto.email,
         programme: dto.programme,
@@ -69,8 +71,20 @@ export class CandidatesService {
   }
 
   async update(id: string, dto: UpdateCandidateDto) {
-    await this.getOrThrow(id);
+    const candidate = await this.getOrThrow(id);
+    // A candidate can only be moved to a role in its own list; never trust a
+    // client-supplied roleId that points at a role from a different list.
+    if (dto.roleId !== undefined) {
+      await this.assertRoleBelongsToList(dto.roleId, candidate.candidateListId);
+    }
     return this.prisma.candidate.update({ where: { id }, data: dto });
+  }
+
+  private async assertRoleBelongsToList(roleId: string, candidateListId: string): Promise<void> {
+    const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+    if (!role || role.candidateListId !== candidateListId) {
+      throw new BadRequestException("Role does not belong to this candidate list");
+    }
   }
 
   async remove(id: string): Promise<void> {

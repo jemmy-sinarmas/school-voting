@@ -23,14 +23,53 @@ export class BrowsingService {
       where: { candidateListId: list.id, isDeleted: false },
       orderBy: { fullName: "asc" },
     });
-    return candidates.map((c) => ({
+    return candidates.map((c) => this.toCandidateSummary(c));
+  }
+
+  /**
+   * The list's roles, each with the candidates standing for it — the shape the
+   * voting UI renders (one selection per role). Ordered by the admin-defined
+   * display order. Only roles that have at least one (non-deleted) candidate
+   * are returned, so empty roles don't show as blank sections.
+   */
+  async rolesForList(listId: string) {
+    const list = await this.assertVisible(listId);
+    const roles = await this.prisma.role.findMany({
+      where: { candidateListId: list.id },
+      orderBy: [{ displayOrder: "asc" }, { name: "asc" }],
+      include: {
+        candidates: {
+          where: { isDeleted: false },
+          orderBy: { fullName: "asc" },
+        },
+      },
+    });
+    return roles
+      .map((role) => ({
+        role: { id: role.id, name: role.name, displayOrder: role.displayOrder },
+        candidates: role.candidates.map((c) => this.toCandidateSummary(c)),
+      }))
+      .filter((group) => group.candidates.length > 0);
+  }
+
+  private toCandidateSummary(c: {
+    id: string;
+    candidateListId: string;
+    roleId: string;
+    fullName: string;
+    photoPath: string | null;
+    programme: string | null;
+    semester: string | null;
+  }) {
+    return {
       id: c.id,
       candidateListId: c.candidateListId,
+      roleId: c.roleId,
       fullName: c.fullName,
       photoPath: c.photoPath,
       programme: c.programme,
       semester: c.semester,
-    }));
+    };
   }
 
   async candidateDetail(candidateId: string) {

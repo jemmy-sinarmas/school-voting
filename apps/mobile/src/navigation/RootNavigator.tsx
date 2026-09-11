@@ -14,6 +14,7 @@ import { CandidateDetailScreen } from "../screens/CandidateDetailScreen";
 import { WinnersScreen } from "../screens/WinnersScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
 import { ChangePasswordScreen } from "../screens/ChangePasswordScreen";
+import { TutorialScreen } from "../screens/TutorialScreen";
 import { useLanguage } from "../i18n/LanguageContext";
 import { colors } from "../theme";
 
@@ -52,6 +53,7 @@ function AppNavigator() {
       <AppStack.Screen name="Winners" component={WinnersScreen} options={{ title: t("home.viewResults") }} />
       <AppStack.Screen name="Settings" component={SettingsScreen} options={{ headerShown: false }} />
       <AppStack.Screen name="ChangePassword" component={ChangePasswordScreen} options={{ headerShown: false }} />
+      <AppStack.Screen name="Tutorial" component={TutorialScreen} options={{ headerShown: false, presentation: "modal" }} />
     </AppStack.Navigator>
   );
 }

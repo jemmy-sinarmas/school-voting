@@ -1,6 +1,7 @@
 import { IsEmail, IsOptional, IsString, IsUrl, MinLength } from "class-validator";
 
 export class UpdateCandidateDto {
+  @IsOptional() @IsString() roleId?: string;
   @IsOptional() @IsString() @MinLength(1) fullName?: string;
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsString() programme?: string;

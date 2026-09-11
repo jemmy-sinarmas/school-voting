@@ -44,13 +44,26 @@ export interface ActiveListResponse {
   reason?: "no_active_list";
 }
 
+export interface RoleSummary {
+  id: string;
+  name: string;
+  displayOrder: number;
+}
+
 export interface CandidateSummary {
   id: string;
   candidateListId: string;
+  roleId: string;
   fullName: string;
   photoPath: string | null;
   programme: string | null;
   semester: string | null;
+}
+
+/** A role together with the candidates standing for it — the unit the voting UI renders. */
+export interface RoleWithCandidates {
+  role: RoleSummary;
+  candidates: CandidateSummary[];
 }
 
 export interface CandidateDetail extends CandidateSummary {
@@ -86,6 +99,17 @@ export interface TallyRow {
   candidateId: string;
   fullName: string;
   voteCount: number;
+  roleId: string;
+  roleName: string;
+}
+
+/** Turnout for a single election list, school-wide (feature E1). */
+export interface TurnoutSummary {
+  listId: string;
+  eligibleStudents: number;
+  votedStudents: number;
+  notVotedStudents: number;
+  turnoutPercent: number;
 }
 
 export interface WinnerEntry {

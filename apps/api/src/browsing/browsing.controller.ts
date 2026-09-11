@@ -17,6 +17,11 @@ export class BrowsingController {
     return this.service.candidatesForList(id);
   }
 
+  @Get("lists/:id/roles")
+  roles(@Param("id") id: string) {
+    return this.service.rolesForList(id);
+  }
+
   @Get("candidates/:id")
   candidateDetail(@Param("id") id: string) {
     return this.service.candidateDetail(id);

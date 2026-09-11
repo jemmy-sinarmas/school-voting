@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import { Admin, Candidate, CandidateList, TallyRow } from "./types";
+import { Admin, Candidate, CandidateList, Role, Student, TallyRow, TurnoutSummary } from "./types";
 
 export const authApi = {
   login: (email: string, password: string) =>
@@ -28,12 +28,35 @@ export const listsApi = {
   activate: (id: string, votingStartAt: string, votingEndAt: string) =>
     apiRequest<CandidateList>(`/admin/lists/${id}/activate`, { method: "POST", body: { votingStartAt, votingEndAt } }),
   close: (id: string) => apiRequest<CandidateList>(`/admin/lists/${id}/close`, { method: "POST" }),
+  turnout: (id: string) => apiRequest<TurnoutSummary>(`/admin/lists/${id}/turnout`),
+};
+
+export const rolesApi = {
+  listForList: (listId: string) => apiRequest<Role[]>(`/admin/lists/${listId}/roles`),
+  create: (listId: string, data: { name: string; displayOrder?: number }) =>
+    apiRequest<Role>(`/admin/lists/${listId}/roles`, { method: "POST", body: data }),
+  update: (roleId: string, data: { name?: string; displayOrder?: number }) =>
+    apiRequest<Role>(`/admin/roles/${roleId}`, { method: "PATCH", body: data }),
+  remove: (roleId: string) => apiRequest<void>(`/admin/roles/${roleId}`, { method: "DELETE" }),
+};
+
+export const studentsApi = {
+  list: (params?: { status?: string; search?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    if (params?.search) query.set("search", params.search);
+    const qs = query.toString();
+    return apiRequest<Student[]>(`/admin/students${qs ? `?${qs}` : ""}`);
+  },
+  setStatus: (id: string, status: string) =>
+    apiRequest<Student>(`/admin/students/${id}/status`, { method: "PATCH", body: { status } }),
 };
 
 export const candidatesApi = {
   listForList: (listId: string) => apiRequest<Candidate[]>(`/admin/candidates?listId=${listId}`),
   create: (data: {
     candidateListId: string;
+    roleId: string;
     fullName: string;
     email: string;
     programme?: string;

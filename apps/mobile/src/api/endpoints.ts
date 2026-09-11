@@ -3,6 +3,7 @@ import {
   CandidateDetail,
   CandidateSummary,
   MyVotesResponse,
+  RoleWithCandidates,
   StudentProfile,
   WinnerEntry,
 } from "@school-voting/shared";
@@ -46,6 +47,7 @@ export const authApi = {
 export const browsingApi = {
   activeList: () => apiRequest<ActiveListResponse>("/lists/active"),
   candidatesForList: (listId: string) => apiRequest<CandidateSummary[]>(`/lists/${listId}/candidates`),
+  rolesForList: (listId: string) => apiRequest<RoleWithCandidates[]>(`/lists/${listId}/roles`),
   candidateDetail: (id: string) => apiRequest<CandidateDetail>(`/candidates/${id}`),
   currentWinners: () => apiRequest<{ year: number | null; winners: WinnerEntry[] }>("/public/winners/current"),
 };

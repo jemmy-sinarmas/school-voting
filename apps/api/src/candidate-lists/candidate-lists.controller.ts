@@ -45,4 +45,9 @@ export class CandidateListsController {
   close(@Param("id") id: string) {
     return this.service.close(id);
   }
+
+  @Get(":id/turnout")
+  turnout(@Param("id") id: string) {
+    return this.service.turnout(id);
+  }
 }

@@ -8,6 +8,8 @@ import { AdminAuthModule } from "./auth/admin/admin-auth.module";
 import { AdminsModule } from "./admins/admins.module";
 import { CandidateListsModule } from "./candidate-lists/candidate-lists.module";
 import { CandidatesModule } from "./candidates/candidates.module";
+import { RoleManagementModule } from "./roles/roles.module";
+import { StudentsModule } from "./students/students.module";
 import { BrowsingModule } from "./browsing/browsing.module";
 import { VotesModule } from "./votes/votes.module";
 import { WinnersModule } from "./winners/winners.module";
@@ -22,6 +24,8 @@ import { WinnersModule } from "./winners/winners.module";
     AdminsModule,
     CandidateListsModule,
     CandidatesModule,
+    RoleManagementModule,
+    StudentsModule,
     BrowsingModule,
     VotesModule,
     WinnersModule,

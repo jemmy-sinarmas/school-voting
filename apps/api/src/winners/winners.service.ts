@@ -10,12 +10,23 @@ export class WinnersService {
   async tally(candidateListId: string) {
     const candidates = await this.prisma.candidate.findMany({
       where: { candidateListId, isDeleted: false },
-      include: { _count: { select: { votes: true } } },
+      include: { _count: { select: { votes: true } }, role: true },
     });
 
     return candidates
-      .map((c) => ({ candidateId: c.id, fullName: c.fullName, voteCount: c._count.votes }))
-      .sort((a, b) => b.voteCount - a.voteCount);
+      .map((c) => ({
+        candidateId: c.id,
+        fullName: c.fullName,
+        voteCount: c._count.votes,
+        roleId: c.roleId,
+        roleName: c.role.name,
+      }))
+      // Group visually by role (role display order, then name), then by votes
+      // within a role so each position's leader is on top.
+      .sort((a, b) => {
+        if (a.roleName !== b.roleName) return a.roleName.localeCompare(b.roleName);
+        return b.voteCount - a.voteCount;
+      });
   }
 
   async promote(dto: PromoteWinnersDto, promotedByAdminId: string) {

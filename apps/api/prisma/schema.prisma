@@ -11,12 +11,15 @@ datasource db {
 
 // -----------------------------------------------------------------------
 // NOTE on vote integrity: the partial unique index that guarantees only one
-// candidate_lists row can be `active` system-wide, and the BEFORE INSERT
-// trigger that re-derives and enforces the 2-vote-per-student-per-list cap,
-// cannot be expressed in Prisma's schema DSL (no partial-index / trigger
-// support for Postgres). Both are added via raw SQL in
-// prisma/migrations/<ts>_vote_integrity_extras/migration.sql, applied after
-// this schema's own migration. See that file for the actual DDL.
+// candidate_lists row can be `active` system-wide cannot be expressed in
+// Prisma's schema DSL (no partial-index support for Postgres). It is added
+// via raw SQL in prisma/migrations/<ts>_vote_integrity_extras/migration.sql.
+//
+// The per-role vote cap ("one vote per student per role") IS expressible here
+// as @@unique([studentId, roleId]) on Vote, so it lives in the schema (no
+// trigger needed). The older per-list 2-vote cap and its enforce_vote_cap
+// trigger were removed by the role_based_voting migration — see that file and
+// docs/specs/features/03-voting-roles.md.
 // -----------------------------------------------------------------------
 
 enum StudentStatus {
@@ -124,6 +127,7 @@ model CandidateList {
   updatedAt      DateTime   @updatedAt @map("updated_at")
 
   electionYear ElectionYear @relation(fields: [electionYearId], references: [id])
+  roles        Role[]
   candidates   Candidate[]
   votes        Vote[]
   winners      Winner[]
@@ -135,9 +139,33 @@ model CandidateList {
   @@map("candidate_lists")
 }
 
+// A role/position within a candidate list (e.g. President, Vice-President).
+// Voting is one-candidate-per-role: the list → role → candidate hierarchy is
+// the core of the election model. Roles belong to exactly one list and are
+// managed by admins while the list is in draft.
+model Role {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  candidateListId String   @map("candidate_list_id") @db.Uuid
+  name            String
+  displayOrder    Int      @default(0) @map("display_order")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Deleting a draft list cascades its roles away with it. A role that still
+  // has candidates cannot itself be deleted (guarded in the service layer).
+  candidateList CandidateList @relation(fields: [candidateListId], references: [id], onDelete: Cascade)
+  candidates    Candidate[]
+  votes         Vote[]
+
+  @@unique([candidateListId, name])
+  @@index([candidateListId, displayOrder])
+  @@map("roles")
+}
+
 model Candidate {
   id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   candidateListId  String   @map("candidate_list_id") @db.Uuid
+  roleId           String   @map("role_id") @db.Uuid
   fullName         String   @map("full_name")
   email            String   @db.Citext
   photoPath        String?  @map("photo_path")
@@ -159,10 +187,13 @@ model Candidate {
   // RESTRICT: a list/candidate with vote history can't be deleted out from
   // under its votes; soft-delete (isDeleted) is used instead at the app layer.
   candidateList CandidateList @relation(fields: [candidateListId], references: [id], onDelete: Restrict)
+  // RESTRICT: keep a role that still has candidates from being deleted.
+  role          Role          @relation(fields: [roleId], references: [id], onDelete: Restrict)
   votes         Vote[]
   winnerEntries Winner[]
 
   @@index([candidateListId])
+  @@index([roleId])
   @@map("candidates")
 }
 
@@ -171,17 +202,22 @@ model Vote {
   studentId       String   @map("student_id") @db.Uuid
   candidateId     String   @map("candidate_id") @db.Uuid
   candidateListId String   @map("candidate_list_id") @db.Uuid
+  roleId          String   @map("role_id") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at")
 
   student       Student       @relation(fields: [studentId], references: [id])
   candidate     Candidate     @relation(fields: [candidateId], references: [id])
   candidateList CandidateList @relation(fields: [candidateListId], references: [id])
+  role          Role          @relation(fields: [roleId], references: [id])
 
-  // Prevents double-voting the same candidate at the DB level regardless of
-  // application logic (layer 1 of the vote-integrity design). The 2-per-list
-  // cap (layer 2/3) is enforced via an advisory-lock transaction in
-  // VotesService plus the raw-SQL trigger backstop — not expressible here.
+  // Layer 1: prevents voting the same candidate twice at the DB level,
+  // regardless of application logic.
   @@unique([studentId, candidateId])
+  // Layer 2 (the core rule): one vote per student per role. This DB unique is
+  // the hard backstop for the "one candidate per role" guarantee; the
+  // VotesService advisory-lock transaction also checks it to return a friendly
+  // error before the constraint fires.
+  @@unique([studentId, roleId])
   @@index([studentId, candidateListId])
   @@map("votes")
 }

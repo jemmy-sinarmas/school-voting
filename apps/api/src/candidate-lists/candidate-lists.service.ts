@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { ListStatus } from "@school-voting/shared";
+import { ListStatus, StudentStatus } from "@school-voting/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateListDto } from "./dto/create-list.dto";
 import { UpdateListDto } from "./dto/update-list.dto";
@@ -103,5 +103,33 @@ export class CandidateListsService {
       where: { id },
       data: { status: ListStatus.CLOSED, closedAt: new Date() },
     });
+  }
+
+  /**
+   * School-wide turnout for a list (feature E1): how many eligible students
+   * have voted at least once in this list vs. not.
+   *  - eligible  = active students (the population allowed to vote)
+   *  - voted     = distinct students with >= 1 vote in this list
+   *  - not voted = eligible - voted, clamped at 0 so a student who voted and
+   *                was later disabled can never push the number negative.
+   */
+  async turnout(id: string) {
+    await this.getOrThrow(id);
+
+    const [eligibleStudents, votedGroups] = await Promise.all([
+      this.prisma.student.count({ where: { status: StudentStatus.ACTIVE } }),
+      this.prisma.vote.findMany({
+        where: { candidateListId: id },
+        distinct: ["studentId"],
+        select: { studentId: true },
+      }),
+    ]);
+
+    const votedStudents = votedGroups.length;
+    const notVotedStudents = Math.max(eligibleStudents - votedStudents, 0);
+    const denominator = Math.max(eligibleStudents, votedStudents);
+    const turnoutPercent = denominator === 0 ? 0 : Math.round((votedStudents / denominator) * 1000) / 10;
+
+    return { listId: id, eligibleStudents, votedStudents, notVotedStudents, turnoutPercent };
   }
 }

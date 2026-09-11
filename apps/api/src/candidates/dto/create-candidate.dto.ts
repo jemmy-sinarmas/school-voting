@@ -5,6 +5,9 @@ export class CreateCandidateDto {
   candidateListId!: string;
 
   @IsString()
+  roleId!: string;
+
+  @IsString()
   @MinLength(1)
   fullName!: string;
 

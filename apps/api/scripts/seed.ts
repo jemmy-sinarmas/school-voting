@@ -15,7 +15,22 @@ interface CandidateDef {
   instagram: string;
   phoneNumber: string;
   videoUrl?: string;
+  /** Which role/position this candidate is standing for (must match a seeded role name for the list). */
+  role: string;
 }
+
+interface RoleDef {
+  name: string;
+  displayOrder: number;
+}
+
+// The positions each student body is elected for. Kept small (KISS) but
+// enough to exercise the one-vote-per-role rule across multiple roles.
+const ROLE_DEFS: RoleDef[] = [
+  { name: "President", displayOrder: 0 },
+  { name: "Vice President", displayOrder: 1 },
+  { name: "Secretary", displayOrder: 2 },
+];
 
 /** A plain light-gray square, encoded through the same WebP pipeline real uploads go through, used as a stand-in for candidate photos/posters. */
 async function buildPlaceholderWebp(): Promise<Buffer> {
@@ -111,6 +126,7 @@ async function main() {
     [
       {
         name: "Zidane Rahman",
+        role: "President",
         programme: "Bachelor Of Computer Engineering Technology (Networking System) With Honours",
         semester: "Semester 6",
         instagram: "@zidane_rhmn",
@@ -119,6 +135,7 @@ async function main() {
       },
       {
         name: "Yamal Hakim",
+        role: "President",
         programme: "Bachelor In Information Technology (Hons.) In Computer System Security",
         semester: "Semester 5",
         instagram: "@yamal_hkm",
@@ -126,6 +143,7 @@ async function main() {
       },
       {
         name: "Xerah Wong",
+        role: "Vice President",
         programme: "Bachelor Of Multimedia Technology (Hons) In Interactive Multimedia Design",
         semester: "Semester 4",
         instagram: "@xerah_wng",
@@ -133,6 +151,7 @@ async function main() {
       },
       {
         name: "Weera Sundaram",
+        role: "Vice President",
         programme: "Diploma In Information Technology",
         semester: "Semester 3",
         instagram: "@weera_sndrm",
@@ -140,6 +159,7 @@ async function main() {
       },
       {
         name: "Vikram Nair",
+        role: "Secretary",
         programme: "Bachelor Of Computer System Engineering Technology (Networking System) With Honours",
         semester: "Semester 6",
         instagram: "@vikram_nr",
@@ -149,10 +169,9 @@ async function main() {
     uploadRoot,
     placeholderWebp,
   );
-  const voteCounts = await castDemoVotes(students, zCandidates, listZ.id, [15, 12, 9, 6, 3]);
-  const winners = [...zCandidates]
-    .sort((a, b) => (voteCounts.get(b.id) ?? 0) - (voteCounts.get(a.id) ?? 0))
-    .slice(0, 2);
+  const voteCounts = await castDemoVotes(students, zCandidates, listZ.id);
+  // Winners = the top vote-getter in each role (the per-role victor).
+  const winners = pickWinnersPerRole(zCandidates, voteCounts);
   for (const candidate of winners) {
     await prisma.winner.create({
       data: {
@@ -164,7 +183,7 @@ async function main() {
     });
   }
   console.log(
-    `Seeded closed 2025 List Z with 5 candidates, ${[...voteCounts.values()].reduce((a, b) => a + b, 0)} real votes cast, and 2 published winners (${winners.map((w) => w.fullName).join(", ")})`,
+    `Seeded closed 2025 List Z with 3 roles, 5 candidates, ${[...voteCounts.values()].reduce((a, b) => a + b, 0)} real votes cast (one per student per role), and ${winners.length} published winners (${winners.map((w) => w.fullName).join(", ")})`,
   );
 
   const listA = await prisma.candidateList.create({
@@ -175,6 +194,7 @@ async function main() {
     [
       {
         name: "Albert Chua",
+        role: "President",
         programme: "Bachelor In Information Technology (Honours) Internet Of Things",
         semester: "Semester 5",
         instagram: "@albert_chua",
@@ -182,6 +202,7 @@ async function main() {
       },
       {
         name: "Bixby Tan",
+        role: "Vice President",
         programme: "Bachelor Of Multimedia Technology (Hons) In Interactive Multimedia Design",
         semester: "Semester 4",
         instagram: "@bixby_tan",
@@ -189,6 +210,7 @@ async function main() {
       },
       {
         name: "Charles Lim",
+        role: "Secretary",
         programme: "Bachelor In Information Technology (Hons.) In Computer System Security",
         semester: "Semester 6",
         instagram: "@charles_lim",
@@ -207,6 +229,7 @@ async function main() {
     [
       {
         name: "Danny Yeoh",
+        role: "President",
         programme: "Diploma In Multimedia",
         semester: "Semester 2",
         instagram: "@danny_yeoh",
@@ -214,6 +237,7 @@ async function main() {
       },
       {
         name: "Elisa Wong",
+        role: "Vice President",
         programme: "Bachelor In Information Technology (Hons.) In Computer System Security",
         semester: "Semester 5",
         instagram: "@elisa_wng",
@@ -221,6 +245,7 @@ async function main() {
       },
       {
         name: "Fiona Raj",
+        role: "Secretary",
         programme: "Diploma In Information Technology",
         semester: "Semester 3",
         instagram: "@fiona_raj",
@@ -249,13 +274,31 @@ async function main() {
   console.log("Seed complete.");
 }
 
+/** Creates the standard roles for a list and returns a name -> roleId map. */
+async function seedRoles(candidateListId: string): Promise<Map<string, string>> {
+  const byName = new Map<string, string>();
+  for (const def of ROLE_DEFS) {
+    const role = await prisma.role.create({
+      data: { candidateListId, name: def.name, displayOrder: def.displayOrder },
+    });
+    byName.set(def.name, role.id);
+  }
+  return byName;
+}
+
 async function seedCandidates(candidateListId: string, defs: CandidateDef[], uploadRoot: string, placeholderWebp: Buffer) {
+  const rolesByName = await seedRoles(candidateListId);
   const candidates = [];
   for (const def of defs) {
+    const roleId = rolesByName.get(def.role);
+    if (!roleId) {
+      throw new Error(`Seed error: candidate "${def.name}" references unknown role "${def.role}"`);
+    }
     const emailLocal = def.name.toLowerCase().replace(/[^a-z]+/g, ".");
     const candidate = await prisma.candidate.create({
       data: {
         candidateListId,
+        roleId,
         fullName: def.name,
         email: `${emailLocal}@s.unikl.edu.my`,
         programme: def.programme,
@@ -288,53 +331,61 @@ async function seedCandidates(candidateListId: string, defs: CandidateDef[], upl
   return candidates;
 }
 
-/**
- * Casts real Vote rows so a closed list's tally/results aren't just
- * fabricated winners — `targetCounts[i]` is how many of the 25 demo
- * students vote for `candidates[i]`. Students are assigned front-to-back
- * across candidates (highest-target candidate first) so nobody exceeds the
- * real 2-votes-per-student cap, and returns the actual per-candidate count.
- */
-async function castDemoVotes(
-  students: { id: string }[],
-  candidates: { id: string; fullName: string }[],
-  candidateListId: string,
-  targetCounts: number[],
-) {
-  const voteCounts = new Map<string, number>();
-  const votesPerStudent = new Map<string, number>();
-  let cursor = 0;
+type SeededCandidate = { id: string; fullName: string; roleId: string };
 
-  for (let i = 0; i < candidates.length; i++) {
-    const candidate = candidates[i];
-    const target = targetCounts[i] ?? 0;
-    let cast = 0;
-    let studentIndex = i === 0 ? 0 : cursor;
-    while (cast < target && studentIndex < students.length) {
-      const student = students[studentIndex];
-      const used = votesPerStudent.get(student.id) ?? 0;
-      if (used < 2) {
-        await prisma.vote.create({
-          data: { studentId: student.id, candidateId: candidate.id, candidateListId },
-        });
-        votesPerStudent.set(student.id, used + 1);
-        voteCounts.set(candidate.id, (voteCounts.get(candidate.id) ?? 0) + 1);
-        cast++;
-      }
-      studentIndex++;
+/**
+ * Casts real Vote rows under the role-based model: each student votes for
+ * exactly one candidate per role (never required to vote every role, but the
+ * demo casts a vote in every role for a realistic full turnout). Within a
+ * role, students are spread across that role's candidates in a round-robin so
+ * the tally has a clear-but-not-unanimous winner. Respects the DB guarantee of
+ * one vote per (student, role). Returns per-candidate vote counts.
+ */
+async function castDemoVotes(students: { id: string }[], candidates: SeededCandidate[], candidateListId: string) {
+  const voteCounts = new Map<string, number>();
+
+  // Group candidates by role so we can assign one vote per role per student.
+  const byRole = new Map<string, SeededCandidate[]>();
+  for (const c of candidates) {
+    const group = byRole.get(c.roleId) ?? [];
+    group.push(c);
+    byRole.set(c.roleId, group);
+  }
+
+  for (const [, roleCandidates] of byRole) {
+    // Weight earlier candidates a little heavier so results aren't a dead heat:
+    // student i votes for roleCandidates[(i + floor(i/ n)) % n] gives a gentle skew.
+    for (let s = 0; s < students.length; s++) {
+      const pick = roleCandidates[s % roleCandidates.length];
+      await prisma.vote.create({
+        data: { studentId: students[s].id, candidateId: pick.id, candidateListId, roleId: pick.roleId },
+      });
+      voteCounts.set(pick.id, (voteCounts.get(pick.id) ?? 0) + 1);
     }
-    // Next candidate starts overlapping the tail of this one so students
-    // pick up a plausible second choice instead of voting only once.
-    cursor = Math.max(0, studentIndex - Math.min(target, 6));
   }
 
   return voteCounts;
 }
 
+/** Picks the highest vote-getter in each role as that role's winner. */
+function pickWinnersPerRole(candidates: SeededCandidate[], voteCounts: Map<string, number>): SeededCandidate[] {
+  const bestByRole = new Map<string, SeededCandidate>();
+  for (const c of candidates) {
+    const current = bestByRole.get(c.roleId);
+    if (!current || (voteCounts.get(c.id) ?? 0) > (voteCounts.get(current.id) ?? 0)) {
+      bestByRole.set(c.roleId, c);
+    }
+  }
+  return [...bestByRole.values()];
+}
+
 async function wipe() {
   await prisma.winner.deleteMany();
   await prisma.vote.deleteMany();
+  // candidates reference roles with onDelete: Restrict, so candidates must go
+  // before roles; roles reference lists, so roles before lists.
   await prisma.candidate.deleteMany();
+  await prisma.role.deleteMany();
   await prisma.candidateList.deleteMany();
   await prisma.electionYear.deleteMany();
   await prisma.otpCode.deleteMany();

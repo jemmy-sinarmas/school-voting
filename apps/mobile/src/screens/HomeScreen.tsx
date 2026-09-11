@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -9,6 +9,7 @@ import { browsingApi, authApi } from "../api/endpoints";
 import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useLanguage } from "../i18n/LanguageContext";
+import { hasSeenVotingTutorial } from "../tutorialStore";
 import { colors } from "../theme";
 
 type Props = NativeStackScreenProps<AppStackParamList, "Home">;
@@ -43,6 +44,20 @@ export function HomeScreen({ navigation }: Props) {
       load();
     }, [load]),
   );
+
+  // First-run onboarding: show the voting tutorial once, the first time the
+  // student lands on Home. The flag is persisted so it won't reappear.
+  useEffect(() => {
+    let cancelled = false;
+    hasSeenVotingTutorial().then((seen) => {
+      if (!cancelled && !seen) {
+        navigation.navigate("Tutorial");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [navigation]);
 
   return (
     <View style={styles.container}>

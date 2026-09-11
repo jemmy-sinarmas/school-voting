@@ -21,6 +21,9 @@ export function CandidateDetailScreen({ route }: Props) {
   const { t } = useLanguage();
   const [candidate, setCandidate] = useState<CandidateDetail | null>(null);
   const [hasVoted, setHasVoted] = useState(false);
+  // If the student already voted for a DIFFERENT candidate in this same role,
+  // we offer a "switch vote" action instead of a plain vote (one vote per role).
+  const [otherVotedInRole, setOtherVotedInRole] = useState<{ id: string; name: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -30,9 +33,19 @@ export function CandidateDetailScreen({ route }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const [detail, myVotes] = await Promise.all([browsingApi.candidateDetail(candidateId), votesApi.mine(listId)]);
+      const [detail, myVotes, roleGroups] = await Promise.all([
+        browsingApi.candidateDetail(candidateId),
+        votesApi.mine(listId),
+        browsingApi.rolesForList(listId),
+      ]);
       setCandidate(detail);
-      setHasVoted(myVotes.candidateIds.includes(candidateId));
+      const votedSet = new Set(myVotes.candidateIds);
+      setHasVoted(votedSet.has(candidateId));
+
+      // Find a candidate in the same role that the student already voted for.
+      const roleGroup = roleGroups.find((g) => g.role.id === detail.roleId);
+      const other = roleGroup?.candidates.find((c) => c.id !== candidateId && votedSet.has(c.id));
+      setOtherVotedInRole(other ? { id: other.id, name: other.fullName } : null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("candidateDetail.loadError"));
     } finally {
@@ -59,8 +72,36 @@ export function CandidateDetailScreen({ route }: Props) {
     try {
       await votesApi.vote(candidateId);
       setHasVoted(true);
+      setOtherVotedInRole(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("candidateDetail.voteError"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // Switch the student's vote within this role: remove the existing vote for
+  // the other candidate, then vote for this one. Both calls are per-role safe
+  // on the server; doing it client-side keeps the flow simple (KISS).
+  async function onSwitchVotePress() {
+    if (!candidate || !otherVotedInRole) return;
+    const ok = await confirm({
+      title: t("candidateDetail.switchConfirmTitle"),
+      description: t("candidateDetail.switchConfirmDesc", { current: otherVotedInRole.name, name: candidate.fullName }),
+      confirmLabel: t("candidateDetail.switchConfirmLabel"),
+    });
+    if (!ok) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await votesApi.unvote(otherVotedInRole.id);
+      await votesApi.vote(candidateId);
+      setHasVoted(true);
+      setOtherVotedInRole(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("candidateDetail.voteError"));
+      // Refresh so the UI reflects the true server state if the switch half-failed.
+      load();
     } finally {
       setSubmitting(false);
     }
@@ -173,6 +214,15 @@ export function CandidateDetailScreen({ route }: Props) {
           <Button mode="contained-tonal" icon="close-circle-outline" onPress={onUnvotePress} loading={submitting} disabled={submitting}>
             {t("candidateDetail.unvote")}
           </Button>
+        ) : otherVotedInRole ? (
+          <>
+            <Text variant="bodySmall" style={styles.roleNotice}>
+              {t("candidateDetail.alreadyVotedRole")}
+            </Text>
+            <Button mode="contained" icon="swap-horizontal" onPress={onSwitchVotePress} loading={submitting} disabled={submitting}>
+              {t("candidateDetail.switchVote")}
+            </Button>
+          </>
         ) : (
           <Button mode="contained" icon="check-circle-outline" onPress={onVotePress} loading={submitting} disabled={submitting}>
             {t("candidateDetail.vote")}
@@ -239,7 +289,8 @@ const styles = StyleSheet.create({
   divider: { marginBottom: 12 },
   sectionTitle: { color: colors.textMuted, marginBottom: 4, letterSpacing: 0.5 },
   sectionBody: { lineHeight: 21 },
-  actions: { padding: 16, borderTopWidth: 1, borderTopColor: "#e5e7eb", backgroundColor: colors.surface },
+  actions: { padding: 16, borderTopWidth: 1, borderTopColor: "#e5e7eb", backgroundColor: colors.surface, gap: 8 },
+  roleNotice: { color: colors.textMuted, textAlign: "center" },
   lightbox: { flex: 1, backgroundColor: "rgba(0,0,0,0.9)", alignItems: "center", justifyContent: "center" },
   lightboxImage: { width: "100%", height: "80%" },
 });

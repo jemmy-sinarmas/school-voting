@@ -1,4 +1,4 @@
-import { AdminRole, AdminStatus, ListStatus } from "@school-voting/shared";
+import { AdminRole, AdminStatus, ListStatus, StudentStatus } from "@school-voting/shared";
 
 export interface Admin {
   id: string;
@@ -28,9 +28,17 @@ export interface CandidateList {
   _count?: { candidates: number };
 }
 
+export interface Role {
+  id: string;
+  candidateListId: string;
+  name: string;
+  displayOrder: number;
+}
+
 export interface Candidate {
   id: string;
   candidateListId: string;
+  roleId: string;
   fullName: string;
   email: string;
   photoPath: string | null;
@@ -52,4 +60,23 @@ export interface TallyRow {
   candidateId: string;
   fullName: string;
   voteCount: number;
+  roleId: string;
+  roleName: string;
+}
+
+export interface Student {
+  id: string;
+  email: string;
+  fullName: string;
+  studentNumber: string;
+  status: StudentStatus;
+  createdAt: string;
+}
+
+export interface TurnoutSummary {
+  listId: string;
+  eligibleStudents: number;
+  votedStudents: number;
+  notVotedStudents: number;
+  turnoutPercent: number;
 }

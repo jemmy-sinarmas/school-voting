@@ -83,6 +83,18 @@ export function SettingsScreen({ navigation }: Props) {
           <Divider style={styles.divider} />
 
           <Text variant="labelLarge" style={styles.sectionHeading}>
+            {t("settings.help")}
+          </Text>
+          <List.Item
+            title={t("settings.howToVote")}
+            left={(props) => <List.Icon {...props} icon="help-circle-outline" />}
+            right={(props) => <List.Icon {...props} icon="chevron-right" />}
+            onPress={() => navigation.navigate("Tutorial")}
+          />
+
+          <Divider style={styles.divider} />
+
+          <Text variant="labelLarge" style={styles.sectionHeading}>
             {t("settings.security")}
           </Text>
           <List.Item
